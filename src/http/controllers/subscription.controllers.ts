@@ -1,16 +1,16 @@
+import { env } from "@/config/env";
+import { workflowClient } from "@/config/upstash";
 import { Subscription } from "@/db/models/subscription.model";
-import { User } from "@/db/models/user.model";
 import type { NextFunction, Request, Response } from "express";
 import { z } from "zod";
 
 const subscriptionSchema = z.object({
     name: z.string(),
     price: z.number(),
-    currency: z.enum(['USD', 'EUR', 'BRL']).default('BRL'),
-    frequency: z.enum(['daily', 'weekly', 'monthly', 'yearly']).optional(),
-    category: z.enum(['sports', 'entertainment', 'health', 'education', 'other']).optional(),
-    paymentMethod: z.enum(['card', 'bank', 'paypal', 'boleto']).optional(),
-    userId: z.string(),
+    currency: z.enum(['USD', 'EUR', 'BRL']).optional().default('BRL'),
+    frequency: z.enum(['daily', 'weekly', 'monthly', 'yearly']).optional().default('monthly'),
+    category: z.enum(['sports', 'entertainment', 'health', 'education', 'other']).optional().default('other'),
+    paymentMethod: z.enum(['card', 'bank', 'paypal', 'boleto']).optional().default('card'),
 })
 
 const subscriptionParamsSchema = z.object({
@@ -18,7 +18,9 @@ const subscriptionParamsSchema = z.object({
 })
 
 export const createSubscription = async (req: Request, res: Response, next: NextFunction) => {
-    const { currency, name, price, userId, category, frequency, paymentMethod } = subscriptionSchema.parse(req.body)
+    const { currency, name, price, category, frequency, paymentMethod } = subscriptionSchema.parse(req.body)
+
+    const userId = req.userId
 
     const subscription = await Subscription.create({
         name,
@@ -27,9 +29,8 @@ export const createSubscription = async (req: Request, res: Response, next: Next
         paymentMethod,
         price,
         currency,
-        user: {
-            id: userId
-        }
+        user: userId,
+        startDate: new Date(),
     })
 
     if(!subscription) {
@@ -37,11 +38,24 @@ export const createSubscription = async (req: Request, res: Response, next: Next
         return
     }
 
-    res.status(201).json({ success: true, data: subscription })
+    const { workflowRunId } = await workflowClient.trigger({
+        url: `${env.SERVER_URL}/api/v1/workflow/subscription/reminder`,
+        body: {
+            subscriptionId: subscription.id
+        },
+        headers: {
+            'Content-Type': 'application/json'
+        },
+        retries: 0
+    })
+
+    res.status(201).json({ success: true, data: { subscription, workflowRunId } })
 }
 
 export const getAllSubscriptions = async (req: Request, res: Response, next: NextFunction) => {
-    const subscriptions = await Subscription.find()
+    const userId = req.userId
+
+    const subscriptions = await Subscription.find({ user: userId })
 
     res.status(200).json({ success: true, data: subscriptions })
 }
@@ -50,7 +64,9 @@ export const getSubscription = async (req: Request, res: Response, next: NextFun
 
     const { id } = subscriptionParamsSchema.parse(req.params)
 
-    const subscription = await Subscription.findById(id)
+    const userId = req.userId
+
+    const subscription = await Subscription.findOne({ id, user: userId })
 
     if(!subscription) {
         res.status(404).json({ success: false, error: 'Subscription not found' })
@@ -66,7 +82,8 @@ export const editSubscription = async (req: Request, res: Response, next: NextFu
 
     const { id } = subscriptionParamsSchema.parse(req.params)
 
-    const { currency, name, price, userId, category, frequency, paymentMethod } = subscriptionSchema.parse(req.body)
+    const { currency, name, price, category, frequency, paymentMethod } = subscriptionSchema.parse(req.body)
+    const userId = req.userId
 
     const newSubscription = await Subscription.findByIdAndUpdate(id, {
         name,
@@ -75,9 +92,7 @@ export const editSubscription = async (req: Request, res: Response, next: NextFu
         paymentMethod,
         price,
         currency,
-        user: {
-            id: userId
-        }
+        user: userId,
     }, { new: true })
 
     if(!newSubscription) {
@@ -91,7 +106,9 @@ export const editSubscription = async (req: Request, res: Response, next: NextFu
 export const deleteSubscription = async (req: Request, res: Response, next: NextFunction) => {
     const { id } = subscriptionParamsSchema.parse(req.params)
 
-    const subscription = await Subscription.findByIdAndDelete(id)
+    const userId = req.userId
+
+    const subscription = await Subscription.findOneAndDelete({ id, user: userId })
 
     if(!subscription) {
         res.status(404).json({ success: false, error: 'Subscription not found' })
@@ -105,14 +122,14 @@ export const getUserSubscriptions = async (req: Request, res: Response, next: Ne
 
     const { id } = subscriptionParamsSchema.parse(req.params)
 
-    const user = await User.findById(id)
+    const userId = req.userId
 
-    if(!user) {
-        res.status(404).json({ success: false, error: 'User not found' })
+    if(id !== userId) {
+        res.status(404).json({ success: false, error: 'You are not the owner of this subscription' })
         return
     }
 
-    const subscriptions = await Subscription.find({ user: { id: user.id } })
+    const subscriptions = await Subscription.find({ user: userId })
 
     res.status(200).json({ success: true, data: subscriptions })
 }
@@ -120,14 +137,9 @@ export const getUserSubscriptions = async (req: Request, res: Response, next: Ne
 export const cancelSubscription = async (req: Request, res: Response, next: NextFunction) => {
     const { id } = subscriptionParamsSchema.parse(req.params)
 
-    const user = await User.findById(id)
+    const userId = req.userId
 
-    if(!user) {
-        res.status(404).json({ success: false, error: 'User not found' })
-        return
-    }
-
-    await Subscription.findByIdAndUpdate(user.id, { status: 'cancelled'})
+    await Subscription.findByIdAndUpdate({id, user: userId}, { status: 'cancelled'})
 
     res.status(204).json({ success: true })
 }
