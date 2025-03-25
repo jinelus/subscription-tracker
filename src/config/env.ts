@@ -13,7 +13,9 @@ const envSchema = z.object({
     QSTASH_URL: z.string(),
     QSTASH_TOKEN: z.string(),
     QSTASH_CURRENT_SIGNING_KEY: z.string(),
-    QSTASH_NEXT_SIGNING_KEY: z.string()
+    QSTASH_NEXT_SIGNING_KEY: z.string(),
+    EMAIL_PASSWORD: z.string(),
+    EMAIL_ACCOUNT: z.string().email(),
 })
 
 const _env = envSchema.safeParse(process.env)

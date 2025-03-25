@@ -3,5 +3,5 @@ import { env } from './env';
 
 export const workflowClient = new WorkflowClient({
     baseUrl: env.QSTASH_URL,
-    token: env.QSTASH_TOKEN
+    token: env.QSTASH_TOKEN,
 })
