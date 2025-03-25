@@ -4,7 +4,7 @@ import { Subscription } from "@/db/models/subscription.model";
 import type { NextFunction, Request, Response } from "express";
 import { z } from "zod";
 
-const subscriptionSchema = z.object({
+export const subscriptionSchema = z.object({
     name: z.string(),
     price: z.number(),
     currency: z.enum(['USD', 'EUR', 'BRL']).optional().default('BRL'),
@@ -18,38 +18,38 @@ const subscriptionParamsSchema = z.object({
 })
 
 export const createSubscription = async (req: Request, res: Response, next: NextFunction) => {
-    const { currency, name, price, category, frequency, paymentMethod } = subscriptionSchema.parse(req.body)
+    try {
+        const { currency, name, price, category, frequency, paymentMethod } = subscriptionSchema.parse(req.body)
 
-    const userId = req.userId
-
-    const subscription = await Subscription.create({
-        name,
-        category,
-        frequency,
-        paymentMethod,
-        price,
-        currency,
-        user: userId,
-        startDate: new Date(),
-    })
-
-    if(!subscription) {
-        res.status(400).json({ success: false, error: 'Subscription not created' })
-        return
+        const userId = req.userId
+    
+        const subscription = await Subscription.create({
+            name,
+            category,
+            frequency,
+            paymentMethod,
+            price,
+            currency,
+            user: userId,
+            startDate: new Date(),
+        })
+    
+        const { workflowRunId } = await workflowClient.trigger({
+            url: `http://127.0.0.1:5500/api/v1/workflows/subscription/reminder`,
+            body: {
+                subscriptionId: subscription.id
+            },
+            headers: {
+                'Content-Type': 'application/json',
+                'Authorization': `Bearer ${env.QSTASH_TOKEN}`
+            },
+            retries: 0
+        })
+    
+        res.status(201).json({ success: true, data: { subscription, workflowRunId } })
+    } catch (error) {
+        next(error)
     }
-
-    const { workflowRunId } = await workflowClient.trigger({
-        url: `${env.SERVER_URL}/api/v1/workflow/subscription/reminder`,
-        body: {
-            subscriptionId: subscription.id
-        },
-        headers: {
-            'Content-Type': 'application/json'
-        },
-        retries: 0
-    })
-
-    res.status(201).json({ success: true, data: { subscription, workflowRunId } })
 }
 
 export const getAllSubscriptions = async (req: Request, res: Response, next: NextFunction) => {
